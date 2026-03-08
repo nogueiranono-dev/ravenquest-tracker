@@ -46,6 +46,8 @@ def supabase_request(method, endpoint, data=None):
             response = requests.get(url, headers=headers, timeout=30)
         elif method == 'POST':
             response = requests.post(url, headers=headers, json=data, timeout=30)
+        elif method == 'DELETE':
+            response = requests.delete(url, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json() if response.text else []
     except Exception as e:
@@ -57,16 +59,54 @@ def save_players_batch(players):
         return False
     
     now = datetime.now().isoformat()
-    players_data = [{'rank': p['rank'], 'name': p['name'], 'level': p['level'], 'exp': p['exp'], 'updated_at': now} for p in players]
-    history_data = [{'player_name': p['name'], 'rank': p['rank'], 'level': p['level'], 'exp': p['exp'], 'recorded_at': now} for p in players]
+    
+    # Prepara dados com upsert
+    players_data = []
+    for p in players:
+        players_data.append({
+            'rank': p['rank'],
+            'name': p['name'],
+            'level': p['level'],
+            'exp': p['exp'],
+            'updated_at': now
+        })
+    
+    history_data = []
+    for p in players:
+        history_data.append({
+            'player_name': p['name'],
+            'rank': p['rank'],
+            'level': p['level'],
+            'exp': p['exp'],
+            'recorded_at': now
+        })
     
     print(f"[INFO] Salvando {len(players_data)} jogadores...")
-    result = supabase_request('POST', 'players', players_data)
-    if result is None:
+    
+    # UPSERT: atualiza se existe, insere se não
+    url = f"{SUPABASE_URL}/rest/v1/players"
+    headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=representation'
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=players_data, timeout=30)
+        response.raise_for_status()
+        print(f"[OK] Players atualizados: {len(response.json()) if response.text else 'OK'}")
+    except Exception as e:
+        print(f"[ERRO] Falha no upsert: {e}")
         return False
     
-    supabase_request('POST', 'history', history_data)
-    print(f"[OK] {len(players_data)} jogadores salvos")
+    # Histórico (sempre insere novo)
+    try:
+        supabase_request('POST', 'history', history_data)
+        print(f"[OK] Histórico salvo")
+    except Exception as e:
+        print(f"[AVISO] Erro no histórico: {e}")
+    
     return True
 
 def parse_exp(v):
