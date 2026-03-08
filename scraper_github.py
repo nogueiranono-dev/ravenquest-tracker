@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-RavenQuest Legacy Tracker - GitHub Actions Edition
-"""
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -14,98 +11,66 @@ from datetime import datetime
 import os
 import re
 import time
-import traceback
 import sys
 import requests
 
-# CONFIGURAÇÃO
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("[ERRO] Variáveis de ambiente não configuradas!")
-    sys.exit(1)
-
-CONFIG = {
-    'top': 50,
-    'url': 'https://ravenquest.io/pt/leaderboard/game/legacy',
-    'debug': False,
-}
-
-def supabase_request(method, endpoint, data=None):
-    url = f"{SUPABASE_URL}/rest/v1/{endpoint}"
-    headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-    }
-    
-    try:
-        if method == 'GET':
-            response = requests.get(url, headers=headers, timeout=30)
-        elif method == 'POST':
-            response = requests.post(url, headers=headers, json=data, timeout=30)
-        elif method == 'DELETE':
-            response = requests.delete(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        return response.json() if response.text else []
-    except Exception as e:
-        print(f"[ERRO Supabase] {e}")
-        return None
-
-def save_players_batch(players):
+def save_to_supabase(players):
     if not players:
         return False
     
     now = datetime.now().isoformat()
     
-    # Prepara dados com upsert
-    players_data = []
-    for p in players:
-        players_data.append({
-            'rank': p['rank'],
-            'name': p['name'],
-            'level': p['level'],
-            'exp': p['exp'],
-            'updated_at': now
-        })
+    # Prepara dados
+    players_data = [{
+        'rank': p['rank'],
+        'name': p['name'],
+        'level': p['level'],
+        'exp': p['exp'],
+        'updated_at': now
+    } for p in players]
     
-    history_data = []
-    for p in players:
-        history_data.append({
-            'player_name': p['name'],
-            'rank': p['rank'],
-            'level': p['level'],
-            'exp': p['exp'],
-            'recorded_at': now
-        })
+    history_data = [{
+        'player_name': p['name'],
+        'rank': p['rank'],
+        'level': p['level'],
+        'exp': p['exp'],
+        'recorded_at': now
+    } for p in players]
     
-    print(f"[INFO] Salvando {len(players_data)} jogadores...")
-    
-    # UPSERT: atualiza se existe, insere se não
+    # Insere players via POST simples
     url = f"{SUPABASE_URL}/rest/v1/players"
     headers = {
         'apikey': SUPABASE_KEY,
         'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates,return=representation'
+        'Content-Type': 'application/json'
     }
     
+    # Tenta limpar primeiro (ignora erro)
     try:
-        response = requests.post(url, headers=headers, json=players_data, timeout=30)
-        response.raise_for_status()
-        print(f"[OK] Players atualizados: {len(response.json()) if response.text else 'OK'}")
+        requests.delete(url, headers={**headers, 'Prefer': 'return=minimal'}, timeout=10)
+    except:
+        pass
+    
+    # Insere novo
+    try:
+        r = requests.post(url, headers=headers, json=players_data, timeout=30)
+        print(f"Players insert: {r.status_code}")
+        if r.status_code >= 400:
+            print(f"Error: {r.text[:200]}")
+            return False
     except Exception as e:
-        print(f"[ERRO] Falha no upsert: {e}")
+        print(f"Players error: {e}")
         return False
     
-    # Histórico (sempre insere novo)
+    # Insere history
     try:
-        supabase_request('POST', 'history', history_data)
-        print(f"[OK] Histórico salvo")
+        r = requests.post(f"{SUPABASE_URL}/rest/v1/history", headers=headers, json=history_data, timeout=30)
+        print(f"History insert: {r.status_code}")
     except Exception as e:
-        print(f"[AVISO] Erro no histórico: {e}")
+        print(f"History error: {e}")
     
     return True
 
@@ -126,108 +91,51 @@ def parse_exp(v):
         return 0
 
 def scrape():
-    print("=" * 70)
-    print("RAVENQUEST LEGACY TRACKER - GitHub Actions")
-    print(f"Início: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-    print("=" * 70)
+    print("Iniciando scraper...")
     
-    try:
-        print("[INFO] Iniciando Chrome...")
-        
-        options = Options()
-        options.add_argument('--headless=new')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-        
-        # Chrome no Ubuntu do GitHub Actions
-        options.binary_location = '/usr/bin/chromium-browser'
-        
-        service = Service('/usr/bin/chromedriver')
-        driver = webdriver.Chrome(service=service, options=options)
-
-        print(f"[INFO] Acessando: {CONFIG['url']}")
-        driver.get(CONFIG['url'])
-        
-        print("[INFO] Aguardando 30s...")
-        time.sleep(30)
-
-        # Seletores
-        selectors = [
-            ".table.legacy-level .tbody .tr",
-            ".table .tbody .tr",
-        ]
-        
-        rows = []
-        for selector in selectors:
-            try:
-                wait = WebDriverWait(driver, 10)
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-                rows = driver.find_elements(By.CSS_SELECTOR, selector)
-                if len(rows) >= 10:
-                    print(f"[OK] Tabela: {selector} ({len(rows)} linhas)")
-                    break
-            except:
+    options = Options()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--window-size=1920,1080')
+    options.binary_location = '/usr/bin/chromium-browser'
+    
+    driver = webdriver.Chrome(service=Service('/usr/bin/chromedriver'), options=options)
+    driver.get('https://ravenquest.io/pt/leaderboard/game/legacy')
+    time.sleep(30)
+    
+    rows = driver.find_elements(By.CSS_SELECTOR, ".table.legacy-level .tbody .tr, .table .tbody .tr")
+    print(f"Encontradas {len(rows)} linhas")
+    
+    players = []
+    for idx, row in enumerate(rows[:50]):
+        try:
+            cells = row.find_elements(By.CSS_SELECTOR, ".td")
+            if len(cells) < 4:
                 continue
-        
-        if not rows:
-            print("[ERRO] Tabela não encontrada")
-            driver.quit()
-            return []
-
-        # Extração
-        players = []
-        for idx, row in enumerate(rows[:CONFIG['top']]):
-            try:
-                cells = row.find_elements(By.CSS_SELECTOR, ".td")
-                if len(cells) < 4:
-                    continue
-                
-                rank_text = cells[0].text.strip()
-                name = cells[1].text.strip()
-                level_text = cells[2].text.strip()
-                exp_text = cells[3].text.strip()
-                
-                rank = idx + 1
-                if rank_text.isdigit():
-                    rank = int(rank_text)
-                
-                level_match = re.search(r'(\d+)', level_text)
-                level = int(level_match.group(1)) if level_match else 0
-                exp = parse_exp(exp_text)
-                
-                if name and level > 0:
-                    players.append({
-                        'rank': rank,
-                        'name': name,
-                        'level': level,
-                        'exp': exp
-                    })
-                    print(f"[OK] #{rank} {name} (Lv{level})")
-                    
-            except Exception as e:
-                print(f"[ERRO] Linha {idx}: {e}")
-
-        driver.quit()
-        print(f"[OK] Total: {len(players)} jogadores")
-        return players
-
-    except Exception as e:
-        print(f"[ERRO GRAVE] {e}")
-        traceback.print_exc()
-        return []
+            
+            rank = int(cells[0].text) if cells[0].text.strip().isdigit() else idx + 1
+            name = cells[1].text.strip()
+            level = int(re.search(r'\d+', cells[2].text).group()) if re.search(r'\d+', cells[2].text) else 0
+            exp = parse_exp(cells[3].text)
+            
+            if name:
+                players.append({'rank': rank, 'name': name, 'level': level, 'exp': exp})
+                print(f"#{rank} {name}")
+        except:
+            pass
+    
+    driver.quit()
+    return players
 
 if __name__ == "__main__":
-    try:
-        players = scrape()
-        if players and save_players_batch(players):
-            print("[OK] Concluído!")
-            sys.exit(0)
-        else:
-            print("[ERRO] Falha")
-            sys.exit(1)
-    except Exception as e:
-        print(f"[ERRO CRÍTICO] {e}")
+    players = scrape()
+    print(f"Total: {len(players)}")
+    
+    if players and save_to_supabase(players):
+        print("OK!")
+        sys.exit(0)
+    else:
+        print("Falha")
         sys.exit(1)
