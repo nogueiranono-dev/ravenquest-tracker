@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+# Instala dependências do Chrome
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    unzip \
+    curl \
+    chromium \
+    chromium-driver \
+    && rm -rf /var/lib/apt/lists/*
+
+# Define variáveis de ambiente para Chrome
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+ENV PYTHONUNBUFFERED=1
+
+# Diretório de trabalho
+WORKDIR /app
+
+# Copia requirements primeiro (cache eficiente)
+COPY requirements.txt .
+
+# Instala Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia código
+COPY scraper.py .
+
+# Comando padrão (pode ser sobrescrito pelo Render)
+CMD ["python", "scraper.py"]
