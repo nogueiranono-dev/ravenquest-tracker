@@ -222,9 +222,10 @@
     <script>
         // CONFIGURAÇÃO - SUBSTITUA COM SUAS CREDENCIAIS
         const SUPABASE_URL = 'https://ovcnaewbnflacdgbgjld.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im92Y25hZXdibmZsYWNkZ2JnamxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI5ODQ5OTksImV4cCI6MjA4ODU2MDk5OX0.v1R0Ty5tHlosFg_ZwxUgtH3JUaO2PiyHe471NXXWono'; // Use a anon public, não a service_role!
+        const SUPABASE_KEY = 'SUA-CHAVE-ANON-AQUI'; // Use a anon public!
 
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        // Cria cliente Supabase com nome diferente para evitar conflito
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         
         let currentTab = 'live';
         let autoRefresh;
@@ -244,7 +245,7 @@
                 let data;
                 
                 if (currentTab === 'live') {
-                    const { data: players, error } = await supabase
+                    const { data: players, error } = await supabaseClient
                         .from('players')
                         .select('*')
                         .order('rank', { ascending: true });
@@ -253,14 +254,14 @@
                     data = players;
                 } else {
                     // Calcula progressão 24h no cliente
-                    const { data: current } = await supabase
+                    const { data: current } = await supabaseClient
                         .from('players')
                         .select('*')
                         .order('rank', { ascending: true });
                     
                     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
                     
-                    const { data: oldData } = await supabase
+                    const { data: oldData } = await supabaseClient
                         .from('history')
                         .select('*')
                         .lte('recorded_at', twentyFourHoursAgo)
